@@ -1,4 +1,6 @@
 .vs
+*.blend1
+*.fbx
 Binaries
 DerivedDataCache
 Flybot.sln
