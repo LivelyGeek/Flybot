@@ -79,4 +79,7 @@ private:
 	uint32 BuiltNegativeYTubeSize;
 	uint32 BuiltPositiveZTubeSize;
 	uint32 BuiltNegativeZTubeSize;
+
+	void AddPointLight(float Intensity, float Radius,
+		const FRotator& Rotation, const FVector& Translation);
 };

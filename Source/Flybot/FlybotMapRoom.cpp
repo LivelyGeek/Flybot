@@ -3,6 +3,7 @@
 #include "FlybotMapRoom.h"
 #include "Flybot.h"
 #include "Components/InstancedStaticMeshComponent.h"
+#include "Components/PointLightComponent.h"
 #include "Components/SceneComponent.h"
 
 AFlybotMapRoom::AFlybotMapRoom()
@@ -94,6 +95,11 @@ void AFlybotMapRoom::OnConstruction(const FTransform& Transform)
 	TubeWalls->ClearInstances();
 	Tubes->ClearInstances();
 
+	TArray<UPointLightComponent*> Lights;
+	GetComponents<UPointLightComponent>(Lights);
+	for (UPointLightComponent* Light : Lights)
+		Light->DestroyComponent();
+
 	// Implicit floor with integer division, which makes all room sizes end up being odd.
 	int32 HalfSize = RoomSize / 2;
 	int32 WallOffset = (HalfSize + 1) * GridSize;
@@ -158,6 +164,7 @@ void AFlybotMapRoom::OnConstruction(const FTransform& Transform)
 		{
 			Translation.X = WallOffset + GridSize * a;
 			AddInstance(Tubes, Rotation, Translation);
+			AddPointLight(1.f, GridSize, Rotation, Translation);
 		}
 	};
 
@@ -167,4 +174,27 @@ void AFlybotMapRoom::OnConstruction(const FTransform& Transform)
 	AddTubeInstances(NegativeYTubeSize, NegativeY);
 	AddTubeInstances(PositiveZTubeSize, PositiveZ);
 	AddTubeInstances(NegativeZTubeSize, NegativeZ);
+
+	Translation.X = 0.f;
+	AddPointLight(2.f, WallOffset * 2, PositiveX, Translation);
+}
+
+void AFlybotMapRoom::AddPointLight(float Intensity, float Radius,
+	const FRotator& Rotation, const FVector& Translation)
+{
+	UPointLightComponent* Light = NewObject<UPointLightComponent>(this,
+		MakeUniqueObjectName(this, UPointLightComponent::StaticClass()));
+	if (!Light)
+		return;
+
+	Light->AttachToComponent(RootComponent, FAttachmentTransformRules::KeepRelativeTransform);
+	Light->RegisterComponent();
+	AddInstanceComponent(Light);
+	Light->SetRelativeTransform(FTransform(Rotation, Rotation.RotateVector(Translation)));
+	Light->Intensity = Intensity;
+	Light->SetAttenuationRadius(Radius);
+	Light->SetSoftSourceRadius(Radius);
+	Light->SetCastShadows(false);
+	Light->bUseInverseSquaredFalloff = false;
+	Light->LightFalloffExponent = 1;
 }
