@@ -3,7 +3,6 @@
 #include "FlybotPlayerPawn.h"
 #include "FlybotPlayerController.h"
 #include "Camera/CameraComponent.h"
-#include "Components/SphereComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "EnhancedInputComponent.h"
 #include "EnhancedInputSubsystems.h"
@@ -12,17 +11,17 @@
 
 AFlybotPlayerPawn::AFlybotPlayerPawn()
 {
-	Sphere = CreateDefaultSubobject<USphereComponent>(TEXT("Sphere"));
-	SetRootComponent(Sphere);
+	Collision = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("Collision"));
+	SetRootComponent(Collision);
 
 	Body = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("Body"));
-	Body->SetupAttachment(Sphere);
+	Body->SetupAttachment(Collision);
 
 	Head = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("Head"));
 	Head->SetupAttachment(Body);
 
 	SpringArm = CreateDefaultSubobject<USpringArmComponent>(TEXT("SpringArm"));
-	SpringArm->SetupAttachment(Sphere);
+	SpringArm->SetupAttachment(Collision);
 
 	Camera = CreateDefaultSubobject<UCameraComponent>(TEXT("Camera"));
 	Camera->SetupAttachment(SpringArm, USpringArmComponent::SocketName);

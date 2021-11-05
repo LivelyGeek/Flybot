@@ -2,6 +2,7 @@
 
 #include "FlybotMapRoom.h"
 #include "Flybot.h"
+#include "Components/BoxComponent.h"
 #include "Components/InstancedStaticMeshComponent.h"
 #include "Components/PointLightComponent.h"
 #include "Components/SceneComponent.h"
@@ -11,6 +12,12 @@ AFlybotMapRoom::AFlybotMapRoom()
 	PrimaryActorTick.bCanEverTick = false;
 	GridSize = 1000.f;
 	RoomSize = 3;
+	WallThickness = 50.f;
+	EdgeCollisionOffset = -250.f;
+	TubeCollisionFaces = 8;
+	TubeCollisionRadius = 425.f;
+	TubeCollisionThickness = 200.f;
+	bRebuild = true;
 
 	USceneComponent* SceneComponent = CreateDefaultSubobject<USceneComponent>(TEXT("SceneComponent"));
 	SetRootComponent(SceneComponent);
@@ -59,35 +66,34 @@ static const FRotator NegativeY180(0.f, 270.f, 180.f);
 static const FRotator PositiveZ(90.f, 0.f, 0.f);
 static const FRotator NegativeZ(-90.f, 0.f, 0.f);
 
+static const FRotator PositivePitch45(45.f, 0.f, 0.f);
+static const FRotator NegativePitch45(-45.f, 0.f, 0.f);
+static const FRotator PositiveYaw45(0.f, 45.f, 0.f);
+static const FRotator NegativeYaw45(0.f, -45.f, 0.f);
+
+#if WITH_EDITOR
+void AFlybotMapRoom::PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent)
+{
+	if (PropertyChangedEvent.Property && PropertyChangedEvent.Property->HasMetaData("RebuildMapRoom"))
+		bRebuild = true;
+
+	Super::PostEditChangeProperty(PropertyChangedEvent);
+}
+#endif
+
 void AFlybotMapRoom::OnConstruction(const FTransform& Transform)
 {
 	Super::OnConstruction(Transform);
 
 	// Only rebuild if needed.
-	if (BuiltGridSize == GridSize &&
-		BuiltRoomSize == RoomSize &&
-		BuiltPositiveXTubeSize == PositiveXTubeSize &&
-		BuiltNegativeXTubeSize == NegativeXTubeSize &&
-		BuiltPositiveYTubeSize == PositiveYTubeSize &&
-		BuiltNegativeYTubeSize == NegativeYTubeSize &&
-		BuiltPositiveZTubeSize == PositiveZTubeSize &&
-		BuiltNegativeZTubeSize == NegativeZTubeSize)
-	{
+	if (!bRebuild)
 		return;
-	}
+
+	bRebuild = false;
 
 	UE_LOG(LogFlybot, Log,
-		TEXT("AFlybotMapRoom::OnConstruction Building Room Size %d (Built=%d this=%x)"),
-		RoomSize, BuiltRoomSize, this);
-
-	BuiltGridSize = GridSize;
-	BuiltRoomSize = RoomSize;
-	BuiltPositiveXTubeSize = PositiveXTubeSize;
-	BuiltNegativeXTubeSize = NegativeXTubeSize;
-	BuiltPositiveYTubeSize = PositiveYTubeSize;
-	BuiltNegativeYTubeSize = NegativeYTubeSize;
-	BuiltPositiveZTubeSize = PositiveZTubeSize;
-	BuiltNegativeZTubeSize = NegativeZTubeSize;
+		TEXT("AFlybotMapRoom::OnConstruction Building Room Size %d (this=%x)"),
+		RoomSize, this);
 
 	Walls->ClearInstances();
 	Edges->ClearInstances();
@@ -100,9 +106,14 @@ void AFlybotMapRoom::OnConstruction(const FTransform& Transform)
 	for (UPointLightComponent* Light : Lights)
 		Light->DestroyComponent();
 
+	TArray<UBoxComponent*> Boxes;
+	GetComponents<UBoxComponent>(Boxes);
+	for (UBoxComponent* Box : Boxes)
+		Box->DestroyComponent();
+
 	// Implicit floor with integer division, which makes all room sizes end up being odd.
 	int32 HalfSize = RoomSize / 2;
-	int32 WallOffset = (HalfSize + 1) * GridSize;
+	WallOffset = (HalfSize + 1) * GridSize;
 	FVector Translation(WallOffset, 0.f, 0.f);
 
 	for (int32 a = -HalfSize; a <= HalfSize; a++)
@@ -154,20 +165,7 @@ void AFlybotMapRoom::OnConstruction(const FTransform& Transform)
 	AddInstance(Corners, NegativeX180, Translation);
 	AddInstance(Corners, NegativeX270, Translation);
 
-	// Build tubes.
-	Translation.Y = 0.f;
-	Translation.Z = 0.f;
-	auto AddTubeInstances = [&](uint32 TubeSize, const FRotator& Rotation)
-	{
-		// Start at 1 because the first tube is the tube wall added above.
-		for (uint32 a = 1; a < TubeSize; a++)
-		{
-			Translation.X = WallOffset + GridSize * a;
-			AddInstance(Tubes, Rotation, Translation);
-			AddPointLight(1.f, GridSize, Rotation, Translation);
-		}
-	};
-
+	// Build tubes and add wall and tube collisions.
 	AddTubeInstances(PositiveXTubeSize, PositiveX);
 	AddTubeInstances(NegativeXTubeSize, NegativeX);
 	AddTubeInstances(PositiveYTubeSize, PositiveY);
@@ -175,22 +173,106 @@ void AFlybotMapRoom::OnConstruction(const FTransform& Transform)
 	AddTubeInstances(PositiveZTubeSize, PositiveZ);
 	AddTubeInstances(NegativeZTubeSize, NegativeZ);
 
-	Translation.X = 0.f;
-	AddPointLight(2.f, WallOffset * 2, PositiveX, Translation);
+	// Build edge collision boxes.
+	Translation.X = WallOffset + EdgeCollisionOffset;
+	Translation.Y = 0;
+	Translation.Z = Translation.X;
+	FVector Extent(WallThickness / 2.f, WallOffset, GridSize / 2.f);
+	AddCollisionBox(Extent, PositiveX, Translation, PositivePitch45);
+	AddCollisionBox(Extent, PositiveX90, Translation, PositiveYaw45);
+	AddCollisionBox(Extent, PositiveX180, Translation, NegativePitch45);
+	AddCollisionBox(Extent, PositiveX270, Translation, NegativeYaw45);
+	AddCollisionBox(Extent, NegativeX, Translation, PositivePitch45);
+	AddCollisionBox(Extent, NegativeX90, Translation, PositiveYaw45);
+	AddCollisionBox(Extent, NegativeX180, Translation, NegativePitch45);
+	AddCollisionBox(Extent, NegativeX270, Translation, NegativeYaw45);
+	AddCollisionBox(Extent, PositiveY, Translation, PositivePitch45);
+	AddCollisionBox(Extent, PositiveY180, Translation, NegativePitch45);
+	AddCollisionBox(Extent, NegativeY, Translation, PositivePitch45);
+	AddCollisionBox(Extent, NegativeY180, Translation, NegativePitch45);
+
+	// Add large light in center of room.
+	AddPointLight(2.f, WallOffset * 2, PositiveX, FVector::ZeroVector);
+}
+
+void AFlybotMapRoom::AddTubeInstances(uint32 TubeSize, const FRotator& Rotation)
+{
+	FVector Translation(WallOffset, 0, 0);
+	FVector Extent(WallThickness / 2.f, WallOffset, WallOffset);
+
+	if (TubeSize == 0)
+	{
+		// No tubes, so add one collision for the entire wall.
+		AddCollisionBox(Extent, Rotation, Translation);
+		return;
+	}
+
+	// Setup wall collision with four sections, leaving a hole in the middle for the tube.
+	Translation.Y = (WallOffset / 2.f) - (GridSize / 4.f);
+	Translation.Z = (WallOffset / 2.f) + (GridSize / 4.f);
+	Extent.Y = Translation.Z;
+	Extent.Z = Translation.Y;
+
+	AddCollisionBox(Extent, Rotation, Translation);
+	AddCollisionBox(Extent, Rotation + PositiveX90, Translation);
+	AddCollisionBox(Extent, Rotation + PositiveX180, Translation);
+	AddCollisionBox(Extent, Rotation + PositiveX270, Translation);
+
+	// Add light at tube entrance.
+	Translation.Y = 0;
+	Translation.Z = 0;
+	AddPointLight(1.f, GridSize, Rotation, Translation);
+
+	// Start at 1 because the first tube is the tube wall added in OnConstruction.
+	for (uint32 a = 1; a < TubeSize; a++)
+	{
+		Translation.X = WallOffset + GridSize * a;
+		AddInstance(Tubes, Rotation, Translation);
+		AddPointLight(1.f, GridSize, Rotation, Translation);
+	}
+
+	// Add tube collision boxes.
+	Extent.X = ((TubeSize * GridSize) / 2.f) - ((GridSize - WallThickness) / 4.f);
+	Extent.Y = GridSize / 2.f;
+	Extent.Z = TubeCollisionThickness / 2.f;
+	Translation.X = WallOffset - (WallThickness / 2.f) + Extent.X;
+
+	for (uint32 a = 0; a < TubeCollisionFaces; a++)
+	{
+		float BoxAngle = (float(a) / TubeCollisionFaces) * (PI * 2.f);
+		Translation.Y = FMath::Sin(BoxAngle) * TubeCollisionRadius;
+		Translation.Z = FMath::Cos(BoxAngle) * TubeCollisionRadius;
+
+		AddCollisionBox(Extent, Rotation, Translation,
+			FRotator(0.f, 0.f, BoxAngle * (180.f / PI)));
+	}
+}
+
+template<class T>
+T* AFlybotMapRoom::AddComponent(const FTransform& Transform)
+{
+	T* Component = NewObject<T>(this);
+	Component->AttachToComponent(RootComponent, FAttachmentTransformRules::KeepRelativeTransform);
+	Component->RegisterComponent();
+	AddInstanceComponent(Component);
+	Component->SetRelativeTransform(Transform);
+	return Component;
+}
+
+void AFlybotMapRoom::AddCollisionBox(const FVector& Extent, const FRotator& Rotation,
+	const FVector& Translation, const FRotator& FaceRotation)
+{
+	UBoxComponent* Box = AddComponent<UBoxComponent>(
+		FTransform(Rotation + FaceRotation, Rotation.RotateVector(Translation)));
+	Box->SetCollisionProfileName(TEXT("BlockAll"));
+	Box->SetBoxExtent(Extent);
 }
 
 void AFlybotMapRoom::AddPointLight(float Intensity, float Radius,
 	const FRotator& Rotation, const FVector& Translation)
 {
-	UPointLightComponent* Light = NewObject<UPointLightComponent>(this,
-		MakeUniqueObjectName(this, UPointLightComponent::StaticClass()));
-	if (!Light)
-		return;
-
-	Light->AttachToComponent(RootComponent, FAttachmentTransformRules::KeepRelativeTransform);
-	Light->RegisterComponent();
-	AddInstanceComponent(Light);
-	Light->SetRelativeTransform(FTransform(Rotation, Rotation.RotateVector(Translation)));
+	UPointLightComponent* Light = AddComponent<UPointLightComponent>(
+		FTransform(Rotation, Rotation.RotateVector(Translation)));
 	Light->Intensity = Intensity;
 	Light->SetAttenuationRadius(Radius);
 	Light->SetSoftSourceRadius(Radius);

@@ -26,9 +26,9 @@ public:
 	/** Handle input to toggle free flying */
 	void ToggleFreeFly();
 
-	/** Sphere to use for root component and collisions. */
+	/** Static mesh to use for root component and collisions. */
 	UPROPERTY(EditAnywhere)
-	class USphereComponent* Sphere;
+	class UStaticMeshComponent* Collision;
 
 	/** Static mesh for the body, attached to the root. */
 	UPROPERTY(EditAnywhere)
