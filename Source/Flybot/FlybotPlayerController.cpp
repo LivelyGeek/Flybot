@@ -52,4 +52,8 @@ void AFlybotPlayerController::SetupInputComponent()
 
 	FreeFlyAction = NewObject<UInputAction>(this);
 	MapKey(PawnMappingContext, FreeFlyAction, EKeys::F);
+
+	SpringArmLengthAction = NewObject<UInputAction>(this);
+	SpringArmLengthAction->ValueType = EInputActionValueType::Axis1D;
+	MapKey(PawnMappingContext, SpringArmLengthAction, EKeys::MouseWheelAxis);
 }

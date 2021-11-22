@@ -30,4 +30,8 @@ public:
 	/** Action to toggle free fly mode. */
 	UPROPERTY()
 	class UInputAction* FreeFlyAction;
+
+	/** Action to update spring arm length. */
+	UPROPERTY()
+	class UInputAction* SpringArmLengthAction;
 };
