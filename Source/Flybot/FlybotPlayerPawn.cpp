@@ -108,10 +108,8 @@ void AFlybotPlayerPawn::ToggleFreeFly()
 void AFlybotPlayerPawn::UpdateSpringArmLength(const FInputActionValue& ActionValue)
 {
 	SpringArm->TargetArmLength += ActionValue[0] * GetWorld()->GetDeltaSeconds() * SpringArmLengthScale;
-	if (SpringArm->TargetArmLength < SpringArmLengthMin)
-		SpringArm->TargetArmLength = SpringArmLengthMin;
-	if (SpringArm->TargetArmLength > SpringArmLengthMax)
-		SpringArm->TargetArmLength = SpringArmLengthMax;
+	SpringArm->TargetArmLength = FMath::Clamp(SpringArm->TargetArmLength,
+		SpringArmLengthMin, SpringArmLengthMax);
 }
 
 void AFlybotPlayerPawn::Tick(float DeltaSeconds)
@@ -131,12 +129,7 @@ void AFlybotPlayerPawn::Tick(float DeltaSeconds)
 
 	if (TiltInput != 0.f)
 	{
-		Rotation.Roll += TiltInput;
-		if (Rotation.Roll > TiltMax)
-			Rotation.Roll = TiltMax;
-		if (Rotation.Roll < -TiltMax)
-			Rotation.Roll = -TiltMax;
-
+		Rotation.Roll = FMath::Clamp(Rotation.Roll + TiltInput, -TiltMax, TiltMax);
 		TiltInput = 0.f;
 	}
 
