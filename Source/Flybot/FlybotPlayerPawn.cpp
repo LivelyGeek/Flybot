@@ -51,6 +51,8 @@ AFlybotPlayerPawn::AFlybotPlayerPawn()
 	TiltMoveScale = 0.6f;
 	TiltRotateScale = 0.4f;
 	TiltResetScale = 0.3f;
+
+	SpawnCollisionHandlingMethod = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
 }
 
 void AFlybotPlayerPawn::SetupPlayerInputComponent(UInputComponent* PlayerInputComponent)
@@ -116,6 +118,12 @@ void AFlybotPlayerPawn::Tick(float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
 
+	// Don't animate or run client RPCs if we're the server.
+	if (GetNetMode() == NM_DedicatedServer)
+	{
+		return;
+	}
+
 	// Add Z Movement.
 	if (ZMovementAmplitude)
 	{
@@ -149,4 +157,17 @@ void AFlybotPlayerPawn::Tick(float DeltaSeconds)
 
 	Body->SetRelativeRotation(Rotation);
 	Head->SetRelativeRotation(FRotator(0.f, Rotation.Roll, 0.f));
+
+	// Replicate movement to authority if we're controlling the pawn.
+	if (Controller && Controller->GetLocalRole() == ROLE_AutonomousProxy)
+	{
+		UpdateServerTransform(Collision->GetRelativeTransform());
+	}
+}
+
+void AFlybotPlayerPawn::UpdateServerTransform_Implementation(FTransform Transform)
+{
+	// Trust that the client is sending valid data for now, but in the future we
+	// should add verification code and correct the client if needed.
+	Collision->SetRelativeTransform(Transform);
 }

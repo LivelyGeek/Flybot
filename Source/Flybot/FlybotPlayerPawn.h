@@ -32,6 +32,10 @@ public:
 	/** Update pawn and components every frame. */
 	void Tick(float DeltaSeconds) override;
 
+	/** Update server with latest transform from the client. */
+	UFUNCTION(Server, Unreliable)
+	void UpdateServerTransform(FTransform Transform);
+
 	/** Static mesh to use for root component and collisions. */
 	UPROPERTY(EditAnywhere)
 	class UStaticMeshComponent* Collision;
