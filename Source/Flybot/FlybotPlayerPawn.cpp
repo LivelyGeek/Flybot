@@ -1,6 +1,7 @@
 // Permission to use, copy, modify, and/or distribute this software for any purpose with or without fee is hereby granted.
 
 #include "FlybotPlayerPawn.h"
+#include "Flybot.h"
 #include "FlybotPlayerController.h"
 #include "Camera/CameraComponent.h"
 #include "Components/StaticMeshComponent.h"
@@ -51,6 +52,7 @@ AFlybotPlayerPawn::AFlybotPlayerPawn()
 	TiltMoveScale = 0.6f;
 	TiltRotateScale = 0.4f;
 	TiltResetScale = 0.3f;
+	MaxMovesWithHits = 30;
 
 	SpawnCollisionHandlingMethod = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
 }
@@ -167,7 +169,47 @@ void AFlybotPlayerPawn::Tick(float DeltaSeconds)
 
 void AFlybotPlayerPawn::UpdateServerTransform_Implementation(FTransform Transform)
 {
-	// Trust that the client is sending valid data for now, but in the future we
-	// should add verification code and correct the client if needed.
+	// Make sure the client does not try to move faster than the game allows.
+	float Distance = FVector::Distance(Collision->GetRelativeLocation(), Transform.GetTranslation());
+	float Speed = Distance / GetWorld()->GetDeltaSeconds();
+	//UE_LOG(LogFlybot, Log, TEXT("Client speed update: %s %.3f %.3f"), *Controller->GetName(),
+	//	Speed, GetWorld()->GetDeltaSeconds());
+
+	// Allow 5% more than MaxSpeed to not reset right at max speed.
+	if (Speed > Movement->MaxSpeed * 1.05f)
+	{
+		// Moving too fast, ignore update and reset client.
+		UE_LOG(LogFlybot, Log, TEXT("Player moving too fast: %s %.3f"), *Controller->GetName(), Speed);
+		UpdateClientTransform(Collision->GetRelativeTransform());
+		return;
+	}
+
+	// Move client with a sweep to see if we hit anything. We seem to get hits on the server even when
+	// the client sends valid moves, especially while sliding against objects. We'll always have a valid
+	// move on the server since the sweep will correct the server side. We expect the client to eventually
+	// send a transform that moves cleanly, but if we go too long (MaxMovesWithHits), send a correction
+	// back to the client. This will cause a stutter on the client so we want to keep it minimal.
+	FTransform OldTransform = Collision->GetRelativeTransform();
+	FHitResult HitResult;
+	Collision->SetRelativeTransform(Transform, true, &HitResult);
+	if (HitResult.bBlockingHit) {
+		//float ExpectedDistance = FVector::Distance(HitResult.TraceStart, HitResult.TraceEnd);
+		//UE_LOG(LogFlybot, Log, TEXT("Player hit object: %s %d (%.3f-%.3f=%.3f)"), *Controller->GetName(),
+		//	MovesWithHits, ExpectedDistance, HitResult.Distance, ExpectedDistance - HitResult.Distance);
+		MovesWithHits++;
+	}
+	else {
+		//UE_LOG(LogFlybot, Log, TEXT("Player move ok: %s"), *Controller->GetName());
+		MovesWithHits = 0;
+	}
+
+	if (MovesWithHits > MaxMovesWithHits) {
+		UE_LOG(LogFlybot, Log, TEXT("Correcting player transform: %s"), *Controller->GetName());
+		UpdateClientTransform(Collision->GetRelativeTransform());
+	}
+}
+
+void AFlybotPlayerPawn::UpdateClientTransform_Implementation(FTransform Transform)
+{
 	Collision->SetRelativeTransform(Transform);
 }

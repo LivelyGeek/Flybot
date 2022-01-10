@@ -36,6 +36,10 @@ public:
 	UFUNCTION(Server, Unreliable)
 	void UpdateServerTransform(FTransform Transform);
 
+	/** Update client transform when server needs to send a correction. */
+	UFUNCTION(Client, Unreliable)
+	void UpdateClientTransform(FTransform Transform);
+
 	/** Static mesh to use for root component and collisions. */
 	UPROPERTY(EditAnywhere)
 	class UStaticMeshComponent* Collision;
@@ -112,10 +116,17 @@ public:
 	UPROPERTY(EditAnywhere)
 	float TiltResetScale;
 
+	/** Max number of consecutive moves with hits to allow from client. */
+	UPROPERTY(EditAnywhere)
+	uint32 MaxMovesWithHits;
+
 private:
 	/** Time to calculate Z movement from. */
 	float ZMovementTime;
 
 	/** The current input to apply to tilt. */
 	float TiltInput;
+
+	/** How many consecutive moves with hits we've seen from client. */
+	uint32 MovesWithHits;
 };
