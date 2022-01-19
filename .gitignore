@@ -2,6 +2,7 @@
 *.blend1
 *.fbx
 Binaries
+Build
 DerivedDataCache
 Flybot.sln
 Intermediate

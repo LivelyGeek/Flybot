@@ -52,6 +52,7 @@ AFlybotPlayerPawn::AFlybotPlayerPawn()
 	TiltMoveScale = 0.6f;
 	TiltRotateScale = 0.4f;
 	TiltResetScale = 0.3f;
+	SpeedCheckInterval = 0.5f;
 	MaxMovesWithHits = 30;
 
 	SpawnCollisionHandlingMethod = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
@@ -169,19 +170,45 @@ void AFlybotPlayerPawn::Tick(float DeltaSeconds)
 
 void AFlybotPlayerPawn::UpdateServerTransform_Implementation(FTransform Transform)
 {
-	// Make sure the client does not try to move faster than the game allows.
-	float Distance = FVector::Distance(Collision->GetRelativeLocation(), Transform.GetTranslation());
-	float Speed = Distance / GetWorld()->GetDeltaSeconds();
-	//UE_LOG(LogFlybot, Log, TEXT("Client speed update: %s %.3f %.3f"), *Controller->GetName(),
-	//	Speed, GetWorld()->GetDeltaSeconds());
-
-	// Allow 5% more than MaxSpeed to not reset right at max speed.
-	if (Speed > Movement->MaxSpeed * 1.05f)
+	// Make sure the client does not try to move faster than the game allows. We can't check
+	// on each update using the server delta time since the server may tick at different rates
+	// than the client, and the server might process multiple updates in one tick. Instead, we
+	// calculate an average position every SpeedCheckInterval and check the speed using that.
+	float Now = GetWorld()->GetRealTimeSeconds();
+	if (SpeedCheckLastTime == 0)
 	{
-		// Moving too fast, ignore update and reset client.
-		UE_LOG(LogFlybot, Log, TEXT("Player moving too fast: %s %.3f"), *Controller->GetName(), Speed);
-		UpdateClientTransform(Collision->GetRelativeTransform());
-		return;
+		SpeedCheckLastTranslation = Transform.GetTranslation();
+		SpeedCheckLastTime = Now;
+		SpeedCheckTranslationSum = FVector::ZeroVector;
+		SpeedCheckTranslationCount = 0;
+	}
+	else
+	{
+		SpeedCheckTranslationSum += Transform.GetTranslation();
+		SpeedCheckTranslationCount++;
+
+		if (Now - SpeedCheckLastTime > SpeedCheckInterval)
+		{
+			FVector SpeedCheckTranslation = SpeedCheckTranslationSum / SpeedCheckTranslationCount;
+			float Distance = FVector::Distance(SpeedCheckLastTranslation, SpeedCheckTranslation);
+			float Speed = Distance / (Now - SpeedCheckLastTime);
+			//UE_LOG(LogFlybot, Log, TEXT("Client speed update: %s %.3f %d"), *Controller->GetName(), Speed, SpeedCheckCount);
+
+			SpeedCheckLastTime = Now;
+			SpeedCheckTranslationSum = FVector::ZeroVector;
+			SpeedCheckTranslationCount = 0;
+
+			// Allow 5% more than MaxSpeed to account for time and translation variation.
+			if (Speed > Movement->MaxSpeed * 1.05f)
+			{
+				// Moving too fast, ignore update and move client back to last translation.
+				UE_LOG(LogFlybot, Log, TEXT("Player moving too fast: %s %.3f"), *Controller->GetName(), Speed);
+				UpdateClientTransform(FTransform(Collision->GetRelativeRotation(), SpeedCheckLastTranslation));
+				return;
+			}
+
+			SpeedCheckLastTranslation = SpeedCheckTranslation;
+		}
 	}
 
 	// Move client with a sweep to see if we hit anything. We seem to get hits on the server even when

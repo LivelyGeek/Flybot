@@ -116,6 +116,10 @@ public:
 	UPROPERTY(EditAnywhere)
 	float TiltResetScale;
 
+	/** How often to check speed with average translation for each interval. */
+	UPROPERTY(EditAnywhere)
+	float SpeedCheckInterval;
+
 	/** Max number of consecutive moves with hits to allow from client. */
 	UPROPERTY(EditAnywhere)
 	uint32 MaxMovesWithHits;
@@ -126,6 +130,18 @@ private:
 
 	/** The current input to apply to tilt. */
 	float TiltInput;
+
+	/** Current sum of translations used for average in next speed check. */
+	FVector SpeedCheckTranslationSum;
+
+	/** Current count of translations used for average in next speed check. */
+	uint32 SpeedCheckTranslationCount;
+
+	/** Last average translation used in speed check. */
+	FVector SpeedCheckLastTranslation;
+
+	/** Last time speed was checked. */
+	float SpeedCheckLastTime;
 
 	/** How many consecutive moves with hits we've seen from client. */
 	uint32 MovesWithHits;
