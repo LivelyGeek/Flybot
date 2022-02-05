@@ -3,12 +3,14 @@
 #include "FlybotPlayerPawn.h"
 #include "Flybot.h"
 #include "FlybotPlayerController.h"
+#include "FlybotShot.h"
 #include "Camera/CameraComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "EnhancedInputComponent.h"
 #include "EnhancedInputSubsystems.h"
 #include "GameFramework/FloatingPawnMovement.h"
 #include "GameFramework/SpringArmComponent.h"
+#include "Net/UnrealNetwork.h"
 
 AFlybotPlayerPawn::AFlybotPlayerPawn()
 {
@@ -42,10 +44,15 @@ AFlybotPlayerPawn::AFlybotPlayerPawn()
 	Movement->Acceleration = 5000.f;
 	Movement->Deceleration = 10000.f;
 
+	PrimaryActorTick.bCanEverTick = true;
+	NetCullDistanceSquared = 1600000000.0f;
+
 	MoveScale = 1.f;
 	RotateScale = 50.f;
 	bFreeFly = false;
-	PrimaryActorTick.bCanEverTick = true;
+	ShootingInterval = 0.2f;
+	ShootingOffset = FVector(300.f, 0.f, 0.f);
+	ShotClass = AFlybotShot::StaticClass();
 	ZMovementFrequency = 2.f;
 	ZMovementAmplitude = 5.f;
 	TiltMax = 15.f;
@@ -56,6 +63,12 @@ AFlybotPlayerPawn::AFlybotPlayerPawn()
 	MaxMovesWithHits = 30;
 
 	SpawnCollisionHandlingMethod = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+}
+
+void AFlybotPlayerPawn::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
+{
+	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
+	DOREPLIFETIME_CONDITION(AFlybotPlayerPawn, bShooting, COND_SimulatedOnly);
 }
 
 void AFlybotPlayerPawn::SetupPlayerInputComponent(UInputComponent* PlayerInputComponent)
@@ -70,6 +83,8 @@ void AFlybotPlayerPawn::SetupPlayerInputComponent(UInputComponent* PlayerInputCo
 	EIC->BindAction(FPC->FreeFlyAction, ETriggerEvent::Started, this, &AFlybotPlayerPawn::ToggleFreeFly);
 	EIC->BindAction(FPC->SpringArmLengthAction, ETriggerEvent::Triggered, this,
 		&AFlybotPlayerPawn::UpdateSpringArmLength);
+	EIC->BindAction(FPC->ShootAction, ETriggerEvent::Started, this, &AFlybotPlayerPawn::Shoot);
+	EIC->BindAction(FPC->ShootAction, ETriggerEvent::Completed, this, &AFlybotPlayerPawn::Shoot);
 
 	ULocalPlayer* LocalPlayer = FPC->GetLocalPlayer();
 	check(LocalPlayer);
@@ -117,9 +132,40 @@ void AFlybotPlayerPawn::UpdateSpringArmLength(const FInputActionValue& ActionVal
 		SpringArmLengthMin, SpringArmLengthMax);
 }
 
+void AFlybotPlayerPawn::Shoot(const FInputActionValue& ActionValue)
+{
+	bShooting = ActionValue[0] > 0.f;
+	UpdateServerShooting(bShooting);
+}
+
+void AFlybotPlayerPawn::UpdateServerShooting_Implementation(bool bNewShooting)
+{
+	bShooting = bNewShooting;
+}
+
 void AFlybotPlayerPawn::Tick(float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
+
+	float Now = GetWorld()->GetRealTimeSeconds();
+
+	// If the shooting action is triggered and enough time has passed since
+	// the last shot, spawn a new shot actor. We do this independently on the
+	// server and all clients. This way we only need to replicate the bShooting
+	// state changes, and not each spawned actor and related movement updates.
+	if (bShooting && Now - ShootingLastTime > ShootingInterval)
+	{
+		ShootingLastTime = Now;
+
+		UE_LOG(LogFlybot, Log, TEXT("Shot spawned %s %.3f %s %s"), *GetName(), Now,
+			IsNetMode(NM_Client) ? TEXT("Client") : TEXT("Server"),
+			Controller ? TEXT("Controlled") : TEXT("Simulated"));
+
+		FTransform Transform = Body->GetComponentTransform();
+		FRotator Rotation = Transform.Rotator();
+		FVector Translation = Transform.GetTranslation() + Rotation.RotateVector(ShootingOffset);
+		GetWorld()->SpawnActor<AFlybotShot>(ShotClass, Translation, Rotation);
+	}
 
 	// Don't animate or run client RPCs if we're the server.
 	if (GetNetMode() == NM_DedicatedServer)

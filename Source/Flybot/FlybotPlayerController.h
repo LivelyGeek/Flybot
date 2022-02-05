@@ -34,4 +34,8 @@ public:
 	/** Action to update spring arm length. */
 	UPROPERTY()
 	class UInputAction* SpringArmLengthAction;
+
+	/** Action to start and stop shooting. */
+	UPROPERTY()
+	class UInputAction* ShootAction;
 };

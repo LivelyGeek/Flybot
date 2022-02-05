@@ -14,6 +14,9 @@ class FLYBOT_API AFlybotPlayerPawn : public APawn
 public:
 	AFlybotPlayerPawn();
 
+	/** Override to setup replicated properties. */
+	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
+
 	/** Bind input actions from player controller. */
 	virtual void SetupPlayerInputComponent(class UInputComponent* PlayerInputComponent) override;
 
@@ -28,6 +31,13 @@ public:
 
 	/** Handle input to update spring arm length. */
 	void UpdateSpringArmLength(const struct FInputActionValue& ActionValue);
+
+	/** Handle input to start and stop shooting. */
+	void Shoot(const struct FInputActionValue& ActionValue);
+
+	/** Update server with latest shooting state from the client. */
+	UFUNCTION(Server, Reliable)
+	void UpdateServerShooting(bool bNewShooting);
 
 	/** Update pawn and components every frame. */
 	void Tick(float DeltaSeconds) override;
@@ -75,6 +85,22 @@ public:
 	/** Whether to use free flying mode. Caution: might cause motion sickness! */
 	UPROPERTY(EditAnywhere)
 	uint32 bFreeFly:1;
+
+	/** Whether we are currently shooting. */
+	UPROPERTY(Replicated)
+	uint32 bShooting:1;
+
+	/** How often we can shoot. */
+	UPROPERTY(EditAnywhere)
+	float ShootingInterval;
+
+	/** Where to spawn the ShotClass relative to the Body. */
+	UPROPERTY(EditAnywhere)
+	FVector ShootingOffset;
+
+	/** Class to spawn when shooting. */
+	UPROPERTY(EditAnywhere)
+	TSubclassOf<class AFlybotShot> ShotClass;
 
 	/** Scale to apply to spring arm length input. */
 	UPROPERTY(EditAnywhere)
@@ -125,6 +151,9 @@ public:
 	uint32 MaxMovesWithHits;
 
 private:
+	/** Last time we shot. */
+	float ShootingLastTime;
+
 	/** Time to calculate Z movement from. */
 	float ZMovementTime;
 

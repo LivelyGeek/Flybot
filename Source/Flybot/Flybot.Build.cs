@@ -12,12 +12,9 @@ public class Flybot : ModuleRules
 			"Core",
 			"CoreUObject",
 			"Engine",
+			"EnhancedInput",
 			"InputCore",
-			"EnhancedInput"
-		});
-
-		PublicIncludePaths.AddRange(new string[] {
-			"EnhancedInput/Public"
+			"Niagara",
 		});
 
 		PrivateDependencyModuleNames.AddRange(new string[] {  });
