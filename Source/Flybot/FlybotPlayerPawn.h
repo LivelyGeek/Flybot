@@ -12,43 +12,19 @@ class FLYBOT_API AFlybotPlayerPawn : public APawn
 	GENERATED_BODY()
 
 public:
+
 	AFlybotPlayerPawn();
 
-	/** Override to setup replicated properties. */
+	/** Setup properties that should be replicated from the server to clients. */
 	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
 
 	/** Bind input actions from player controller. */
 	virtual void SetupPlayerInputComponent(class UInputComponent* PlayerInputComponent) override;
 
-	/** Handle input to update location. */
-	void Move(const struct FInputActionValue& ActionValue);
+	/** Perform pawn updates that need to happen every frame. */
+	virtual void Tick(float DeltaSeconds) override;
 
-	/** Handle input to update rotation. */
-	void Rotate(const struct FInputActionValue& ActionValue);
-
-	/** Handle input to toggle free flying. */
-	void ToggleFreeFly();
-
-	/** Handle input to update spring arm length. */
-	void UpdateSpringArmLength(const struct FInputActionValue& ActionValue);
-
-	/** Handle input to start and stop shooting. */
-	void Shoot(const struct FInputActionValue& ActionValue);
-
-	/** Update server with latest shooting state from the client. */
-	UFUNCTION(Server, Reliable)
-	void UpdateServerShooting(bool bNewShooting);
-
-	/** Update pawn and components every frame. */
-	void Tick(float DeltaSeconds) override;
-
-	/** Update server with latest transform from the client. */
-	UFUNCTION(Server, Unreliable)
-	void UpdateServerTransform(FTransform Transform);
-
-	/** Update client transform when server needs to send a correction. */
-	UFUNCTION(Client, Unreliable)
-	void UpdateClientTransform(FTransform Transform);
+private:
 
 	/** Static mesh to use for root component and collisions. */
 	UPROPERTY(EditAnywhere)
@@ -62,6 +38,10 @@ public:
 	UPROPERTY(EditAnywhere)
 	class UStaticMeshComponent* Head;
 
+	/*
+	* Springarm and Camera
+	*/
+
 	/** Spring arm to hold camera, attached to the root. */
 	UPROPERTY(EditAnywhere)
 	class USpringArmComponent* SpringArm;
@@ -69,6 +49,25 @@ public:
 	/** Camera attached to spring arm to provide pawn's view. */
 	UPROPERTY(EditAnywhere)
 	class UCameraComponent* Camera;
+
+	/** Scale to apply to spring arm length input. */
+	UPROPERTY(EditAnywhere)
+	float SpringArmLengthScale;
+
+	/** Minimum spring arm length. */
+	UPROPERTY(EditAnywhere)
+	float SpringArmLengthMin;
+
+	/** Maximum spring arm length. */
+	UPROPERTY(EditAnywhere)
+	float SpringArmLengthMax;
+
+	/** Handle input to update spring arm length. */
+	void UpdateSpringArmLength(const struct FInputActionValue& ActionValue);
+
+	/*
+	* Movement
+	*/
 
 	/** Use floating pawn movement to smooth out motion. */
 	UPROPERTY(EditAnywhere)
@@ -84,35 +83,51 @@ public:
 
 	/** Whether to use free flying mode. Caution: might cause motion sickness! */
 	UPROPERTY(EditAnywhere)
-	uint32 bFreeFly:1;
+	bool bFreeFly;
 
-	/** Whether we are currently shooting. */
-	UPROPERTY(Replicated)
-	uint32 bShooting:1;
+	/** Handle input to update location. */
+	void Move(const struct FInputActionValue& ActionValue);
 
-	/** How often we can shoot. */
+	/** Handle input to update rotation. */
+	void Rotate(const struct FInputActionValue& ActionValue);
+
+	/** Handle input to toggle free flying. */
+	void ToggleFreeFly();
+
+	/** Update server with latest transform from the client. */
+	UFUNCTION(Server, Unreliable)
+	void UpdateServerTransform(FTransform Transform);
+
+	/** Update client transform when server needs to send a correction. */
+	UFUNCTION(Client, Unreliable)
+	void UpdateClientTransform(FTransform Transform);
+
+	/** How often to check speed with average translation for each interval. */
 	UPROPERTY(EditAnywhere)
-	float ShootingInterval;
+	float SpeedCheckInterval;
 
-	/** Where to spawn the ShotClass relative to the Body. */
-	UPROPERTY(EditAnywhere)
-	FVector ShootingOffset;
+	/** Current sum of translations used for average in next speed check. */
+	FVector SpeedCheckTranslationSum;
 
-	/** Class to spawn when shooting. */
-	UPROPERTY(EditAnywhere)
-	TSubclassOf<class AFlybotShot> ShotClass;
+	/** Current count of translations used for average in next speed check. */
+	uint32 SpeedCheckTranslationCount;
 
-	/** Scale to apply to spring arm length input. */
-	UPROPERTY(EditAnywhere)
-	float SpringArmLengthScale;
+	/** Last average translation used in speed check. */
+	FVector SpeedCheckLastTranslation;
 
-	/** Minimum spring arm length. */
-	UPROPERTY(EditAnywhere)
-	float SpringArmLengthMin;
+	/** Last time speed was checked. */
+	float SpeedCheckLastTime;
 
-	/** Maximum spring arm length. */
+	/** Max number of consecutive moves with hits to allow from client. */
 	UPROPERTY(EditAnywhere)
-	float SpringArmLengthMax;
+	uint32 MaxMovesWithHits;
+
+	/** How many consecutive moves with hits we've seen from client. */
+	uint32 MovesWithHits;
+
+	/*
+	* Pawn Animation
+	*/
 
 	/** Amplitude to scale Z movement by, 0 to disable Z movement. */
 	UPROPERTY(EditAnywhere)
@@ -125,6 +140,9 @@ public:
 	/** Offset to apply to Z movement after after calculating amplitude. */
 	UPROPERTY(EditAnywhere)
 	float ZMovementOffset;
+
+	/** The current input to apply to tilt. */
+	float TiltInput;
 
 	/** Max tilt to apply to body and head while turning. */
 	UPROPERTY(EditAnywhere)
@@ -142,36 +160,39 @@ public:
 	UPROPERTY(EditAnywhere)
 	float TiltResetScale;
 
-	/** How often to check speed with average translation for each interval. */
-	UPROPERTY(EditAnywhere)
-	float SpeedCheckInterval;
+	/** Perform tilting and hovering animation for pawn. */
+	void UpdatePawnAnimation();
 
-	/** Max number of consecutive moves with hits to allow from client. */
-	UPROPERTY(EditAnywhere)
-	uint32 MaxMovesWithHits;
+	/*
+	* Shooting
+	*/
 
-private:
+	/** Whether we are currently shooting. */
+	UPROPERTY(Replicated)
+	bool bShooting;
+
+	/** How often we can shoot. */
+	UPROPERTY(EditAnywhere)
+	float ShootingInterval;
+
+	/** Where to spawn the ShotClass relative to the Body. */
+	UPROPERTY(EditAnywhere)
+	FVector ShootingOffset;
+
+	/** Class to spawn when shooting. */
+	UPROPERTY(EditAnywhere)
+	TSubclassOf<class AFlybotShot> ShotClass;
+
+	/** Handle input to start and stop shooting. */
+	void Shoot(const struct FInputActionValue& ActionValue);
+
+	/** Update server with latest shooting state from the client. */
+	UFUNCTION(Server, Reliable)
+	void UpdateServerShooting(bool bNewShooting);
+
+	/** Try spawning a shot actor moving in the direction of where the camera is looking. */
+	void TryShooting();
+
 	/** Last time we shot. */
 	float ShootingLastTime;
-
-	/** Time to calculate Z movement from. */
-	float ZMovementTime;
-
-	/** The current input to apply to tilt. */
-	float TiltInput;
-
-	/** Current sum of translations used for average in next speed check. */
-	FVector SpeedCheckTranslationSum;
-
-	/** Current count of translations used for average in next speed check. */
-	uint32 SpeedCheckTranslationCount;
-
-	/** Last average translation used in speed check. */
-	FVector SpeedCheckLastTranslation;
-
-	/** Last time speed was checked. */
-	float SpeedCheckLastTime;
-
-	/** How many consecutive moves with hits we've seen from client. */
-	uint32 MovesWithHits;
 };

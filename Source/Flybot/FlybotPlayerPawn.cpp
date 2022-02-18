@@ -24,11 +24,13 @@ AFlybotPlayerPawn::AFlybotPlayerPawn()
 	Head = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("Head"));
 	Head->SetupAttachment(Body);
 
+	// Springarm and Camera
 	SpringArm = CreateDefaultSubobject<USpringArmComponent>(TEXT("SpringArm"));
 	SpringArm->SetupAttachment(Collision);
 	SpringArm->SetRelativeLocation(FVector(120.f, 0.f, 50.f));
 	SpringArm->SetRelativeRotation(FRotator(-15.f, 0.f, 0.f));
 	SpringArm->TargetArmLength = 600.f;
+
 	SpringArmLengthScale = 2000.f;
 	SpringArmLengthMin = 0.f;
 	SpringArmLengthMax = 1000.f;
@@ -39,29 +41,48 @@ AFlybotPlayerPawn::AFlybotPlayerPawn()
 	Camera->PostProcessSettings.bOverride_MotionBlurAmount = true;
 	Camera->PostProcessSettings.MotionBlurAmount = 0.1f;
 
+	// Movement
 	Movement = CreateDefaultSubobject<UFloatingPawnMovement>(TEXT("Movement"));
 	Movement->MaxSpeed = 5000.f;
 	Movement->Acceleration = 5000.f;
 	Movement->Deceleration = 10000.f;
 
-	PrimaryActorTick.bCanEverTick = true;
-	NetCullDistanceSquared = 1600000000.0f;
-
 	MoveScale = 1.f;
 	RotateScale = 50.f;
 	bFreeFly = false;
-	ShootingInterval = 0.2f;
-	ShootingOffset = FVector(300.f, 0.f, 0.f);
-	ShotClass = AFlybotShot::StaticClass();
+	SpeedCheckInterval = 0.5f;
+	SpeedCheckTranslationSum = FVector::ZeroVector;
+	SpeedCheckTranslationCount = 0;
+	SpeedCheckLastTranslation = FVector::ZeroVector;
+	SpeedCheckLastTime = 0.f;
+	MaxMovesWithHits = 30;
+	MovesWithHits = 0;
+
+	// Pawn Animation
 	ZMovementFrequency = 2.f;
 	ZMovementAmplitude = 5.f;
+	ZMovementOffset = 0.f;
+
+	TiltInput = 0.f;
 	TiltMax = 15.f;
 	TiltMoveScale = 0.6f;
 	TiltRotateScale = 0.4f;
 	TiltResetScale = 0.3f;
-	SpeedCheckInterval = 0.5f;
-	MaxMovesWithHits = 30;
 
+	// Shooting
+	bShooting = false;
+	ShootingInterval = 0.2f;
+	ShootingOffset = FVector(300.f, 0.f, 0.f);
+	ShotClass = AFlybotShot::StaticClass();
+	ShootingLastTime = 0.f;
+
+	// Allow ticking for the pawn.
+	PrimaryActorTick.bCanEverTick = true;
+
+	// We should match this to FlybotShot (life span * speed) so they are destroyed at the same distance.
+	NetCullDistanceSquared = 1600000000.f;
+
+	// Force pawn to always spawn, even if it is colliding with another object.
 	SpawnCollisionHandlingMethod = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
 }
 
@@ -76,7 +97,7 @@ void AFlybotPlayerPawn::SetupPlayerInputComponent(UInputComponent* PlayerInputCo
 	Super::SetupPlayerInputComponent(PlayerInputComponent);
 
 	UEnhancedInputComponent* EIC = Cast<UEnhancedInputComponent>(PlayerInputComponent);
-	AFlybotPlayerController* FPC = Cast<AFlybotPlayerController>(Controller);
+	AFlybotPlayerController* FPC = GetController<AFlybotPlayerController>();
 	check(EIC && FPC);
 	EIC->BindAction(FPC->MoveAction, ETriggerEvent::Triggered, this, &AFlybotPlayerPawn::Move);
 	EIC->BindAction(FPC->RotateAction, ETriggerEvent::Triggered, this, &AFlybotPlayerPawn::Rotate);
@@ -94,6 +115,40 @@ void AFlybotPlayerPawn::SetupPlayerInputComponent(UInputComponent* PlayerInputCo
 	Subsystem->ClearAllMappings();
 	Subsystem->AddMappingContext(FPC->PawnMappingContext, 0);
 }
+
+void AFlybotPlayerPawn::Tick(float DeltaSeconds)
+{
+	Super::Tick(DeltaSeconds);
+
+	TryShooting();
+
+	// Don't animate if we're the server.
+	if (GetNetMode() != NM_DedicatedServer)
+	{
+		UpdatePawnAnimation();
+	}
+
+	// Replicate movement to server if we're the client controlling the pawn.
+	if (GetLocalRole() == ROLE_AutonomousProxy)
+	{
+		UpdateServerTransform(Collision->GetRelativeTransform());
+	}
+}
+
+/*
+* Camera and Springarm
+*/
+
+void AFlybotPlayerPawn::UpdateSpringArmLength(const FInputActionValue& ActionValue)
+{
+	SpringArm->TargetArmLength += ActionValue[0] * GetWorld()->GetDeltaSeconds() * SpringArmLengthScale;
+	SpringArm->TargetArmLength = FMath::Clamp(SpringArm->TargetArmLength,
+		SpringArmLengthMin, SpringArmLengthMax);
+}
+
+/*
+* Movement
+*/
 
 void AFlybotPlayerPawn::Move(const FInputActionValue& ActionValue)
 {
@@ -123,95 +178,6 @@ void AFlybotPlayerPawn::Rotate(const FInputActionValue& ActionValue)
 void AFlybotPlayerPawn::ToggleFreeFly()
 {
 	bFreeFly = !bFreeFly;
-}
-
-void AFlybotPlayerPawn::UpdateSpringArmLength(const FInputActionValue& ActionValue)
-{
-	SpringArm->TargetArmLength += ActionValue[0] * GetWorld()->GetDeltaSeconds() * SpringArmLengthScale;
-	SpringArm->TargetArmLength = FMath::Clamp(SpringArm->TargetArmLength,
-		SpringArmLengthMin, SpringArmLengthMax);
-}
-
-void AFlybotPlayerPawn::Shoot(const FInputActionValue& ActionValue)
-{
-	bShooting = ActionValue[0] > 0.f;
-	UpdateServerShooting(bShooting);
-}
-
-void AFlybotPlayerPawn::UpdateServerShooting_Implementation(bool bNewShooting)
-{
-	bShooting = bNewShooting;
-}
-
-void AFlybotPlayerPawn::Tick(float DeltaSeconds)
-{
-	Super::Tick(DeltaSeconds);
-
-	float Now = GetWorld()->GetRealTimeSeconds();
-
-	// If the shooting action is triggered and enough time has passed since
-	// the last shot, spawn a new shot actor. We do this independently on the
-	// server and all clients. This way we only need to replicate the bShooting
-	// state changes, and not each spawned actor and related movement updates.
-	if (bShooting && Now - ShootingLastTime > ShootingInterval)
-	{
-		ShootingLastTime = Now;
-
-		UE_LOG(LogFlybot, Log, TEXT("Shot spawned %s %.3f %s %s"), *GetName(), Now,
-			IsNetMode(NM_Client) ? TEXT("Client") : TEXT("Server"),
-			Controller ? TEXT("Controlled") : TEXT("Simulated"));
-
-		FTransform Transform = Body->GetComponentTransform();
-		FRotator Rotation = Transform.Rotator();
-		FVector Translation = Transform.GetTranslation() + Rotation.RotateVector(ShootingOffset);
-		GetWorld()->SpawnActor<AFlybotShot>(ShotClass, Translation, Rotation);
-	}
-
-	// Don't animate or run client RPCs if we're the server.
-	if (GetNetMode() == NM_DedicatedServer)
-	{
-		return;
-	}
-
-	// Add Z Movement.
-	if (ZMovementAmplitude)
-	{
-		ZMovementTime += DeltaSeconds;
-		float ZMovement = FMath::Sin(ZMovementTime * ZMovementFrequency) * ZMovementAmplitude;
-		Body->SetRelativeLocation(FVector(0.f, 0.f, ZMovement + ZMovementOffset));
-	}
-
-	// Add body and head tilting.
-	FRotator Rotation = Body->GetRelativeRotation();
-
-	if (TiltInput != 0.f)
-	{
-		Rotation.Roll = FMath::Clamp(Rotation.Roll + TiltInput, -TiltMax, TiltMax);
-		TiltInput = 0.f;
-	}
-
-	// Always try to tilt back towards the center.
-	if (Rotation.Roll > 0.f)
-	{
-		Rotation.Roll -= TiltResetScale;
-		if (Rotation.Roll < 0.f)
-			Rotation.Roll = 0.f;
-	}
-	else if (Rotation.Roll < 0.f)
-	{
-		Rotation.Roll += TiltResetScale;
-		if (Rotation.Roll > 0.f)
-			Rotation.Roll = 0.f;
-	}
-
-	Body->SetRelativeRotation(Rotation);
-	Head->SetRelativeRotation(FRotator(0.f, Rotation.Roll, 0.f));
-
-	// Replicate movement to authority if we're controlling the pawn.
-	if (Controller && Controller->GetLocalRole() == ROLE_AutonomousProxy)
-	{
-		UpdateServerTransform(Collision->GetRelativeTransform());
-	}
 }
 
 void AFlybotPlayerPawn::UpdateServerTransform_Implementation(FTransform Transform)
@@ -244,8 +210,8 @@ void AFlybotPlayerPawn::UpdateServerTransform_Implementation(FTransform Transfor
 			SpeedCheckTranslationSum = FVector::ZeroVector;
 			SpeedCheckTranslationCount = 0;
 
-			// Allow 5% more than MaxSpeed to account for time and translation variation.
-			if (Speed > Movement->MaxSpeed * 1.05f)
+			// Allow 10% more than MaxSpeed to account for time and translation variation.
+			if (Speed > Movement->MaxSpeed * 1.1f)
 			{
 				// Moving too fast, ignore update and move client back to last translation.
 				UE_LOG(LogFlybot, Log, TEXT("Player moving too fast: %s %.3f"), *Controller->GetName(), Speed);
@@ -285,4 +251,81 @@ void AFlybotPlayerPawn::UpdateServerTransform_Implementation(FTransform Transfor
 void AFlybotPlayerPawn::UpdateClientTransform_Implementation(FTransform Transform)
 {
 	Collision->SetRelativeTransform(Transform);
+}
+
+/*
+* Pawn Animation
+*/
+
+void AFlybotPlayerPawn::UpdatePawnAnimation()
+{
+	// Add Z Movement.
+	if (ZMovementAmplitude)
+	{
+		float ZMovement = FMath::Sin(GetWorld()->GetTimeSeconds() * ZMovementFrequency) * ZMovementAmplitude;
+		Body->SetRelativeLocation(FVector(0.f, 0.f, ZMovement + ZMovementOffset));
+	}
+
+	// Add body and head tilting.
+	FRotator Rotation = Body->GetRelativeRotation();
+
+	if (TiltInput != 0.f)
+	{
+		Rotation.Roll = FMath::Clamp(Rotation.Roll + TiltInput, -TiltMax, TiltMax);
+		TiltInput = 0.f;
+	}
+
+	// Always try to tilt back towards the center.
+	if (Rotation.Roll > 0.f)
+	{
+		Rotation.Roll -= TiltResetScale;
+		if (Rotation.Roll < 0.f)
+			Rotation.Roll = 0.f;
+	}
+	else if (Rotation.Roll < 0.f)
+	{
+		Rotation.Roll += TiltResetScale;
+		if (Rotation.Roll > 0.f)
+			Rotation.Roll = 0.f;
+	}
+
+	Body->SetRelativeRotation(Rotation);
+	Head->SetRelativeRotation(FRotator(0.f, Rotation.Roll, 0.f));
+}
+
+/*
+* Shooting
+*/
+
+void AFlybotPlayerPawn::Shoot(const FInputActionValue& ActionValue)
+{
+	bShooting = ActionValue[0] > 0.f;
+	UpdateServerShooting(bShooting);
+}
+
+void AFlybotPlayerPawn::UpdateServerShooting_Implementation(bool bNewShooting)
+{
+	bShooting = bNewShooting;
+}
+
+void AFlybotPlayerPawn::TryShooting()
+{
+	float Now = GetWorld()->GetRealTimeSeconds();
+
+	// We spawn shot actors independently on the server and all clients. This way we only need to replicate
+	// the shooting state changes, and not each spawned shot actor and related movement updates.
+	if (!bShooting || Now - ShootingLastTime < ShootingInterval)
+	{
+		return;
+	}
+
+	ShootingLastTime = Now;
+
+	FRotator ShotRotation = Body->GetComponentRotation();
+	FVector ShotStart = Body->GetComponentLocation() + ShotRotation.RotateVector(ShootingOffset);
+	GetWorld()->SpawnActor<AFlybotShot>(ShotClass, ShotStart, ShotRotation);
+
+	UE_LOG(LogFlybot, Log, TEXT("Shot spawned %s %s %s"), *GetName(),
+		IsNetMode(NM_Client) ? TEXT("Client") : TEXT("Server"),
+		Controller ? TEXT("Controlled") : TEXT("Simulated"));
 }
