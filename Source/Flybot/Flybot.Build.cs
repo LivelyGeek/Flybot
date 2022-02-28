@@ -15,6 +15,7 @@ public class Flybot : ModuleRules
 			"EnhancedInput",
 			"InputCore",
 			"Niagara",
+			"UMG"
 		});
 
 		PrivateDependencyModuleNames.AddRange(new string[] {  });

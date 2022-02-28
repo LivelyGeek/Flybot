@@ -2,6 +2,7 @@
 
 #include "FlybotShot.h"
 #include "Flybot.h"
+#include "FlybotPlayerPawn.h"
 #include "Components/SphereComponent.h"
 #include "GameFramework/ProjectileMovementComponent.h"
 #include "NiagaraComponent.h"
@@ -26,6 +27,8 @@ AFlybotShot::AFlybotShot()
 	// Destroy after moving 40k units (life span * speed) to match the net cull distance
 	// in the player pawn.
 	InitialLifeSpan = 2.f;
+	HealthDelta = -1.f;
+	PowerDelta = -1.f;
 }
 
 void AFlybotShot::OnHit(UPrimitiveComponent* HitComponent, AActor* OtherActor, UPrimitiveComponent* OtherComponent,
@@ -33,6 +36,13 @@ void AFlybotShot::OnHit(UPrimitiveComponent* HitComponent, AActor* OtherActor, U
 {
 	UE_LOG(LogFlybot, Log, TEXT("Shot hit %s %s"), *OtherActor->GetName(),
 		IsNetMode(NM_Client) ? TEXT("Client") : TEXT("Server"));
+
+	AFlybotPlayerPawn* Target = Cast<AFlybotPlayerPawn>(OtherActor);
+	AFlybotPlayerPawn* Shooter = GetInstigator<AFlybotPlayerPawn>();
+	if (Target && Target != Shooter && Target->GetLocalRole() == ROLE_Authority)
+	{
+		Target->UpdateHealth(HealthDelta);
+	}
 
 	if (HitSystem)
 	{

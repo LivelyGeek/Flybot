@@ -34,4 +34,12 @@ public:
 	/** Niagara FX system for hit visual. */
 	UPROPERTY(EditAnywhere)
 	class UNiagaraSystem* HitSystem;
+
+	/** How much to change health by when hitting another player. */
+	UPROPERTY(EditAnywhere)
+	float HealthDelta;
+
+	/** How much to change power by when using this shot. */
+	UPROPERTY(EditAnywhere)
+	float PowerDelta;
 };

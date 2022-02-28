@@ -3,7 +3,9 @@
 #include "FlybotPlayerPawn.h"
 #include "Flybot.h"
 #include "FlybotPlayerController.h"
+#include "FlybotPlayerHUD.h"
 #include "FlybotShot.h"
+#include "Blueprint/UserWidget.h"
 #include "Camera/CameraComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "EnhancedInputComponent.h"
@@ -76,6 +78,19 @@ AFlybotPlayerPawn::AFlybotPlayerPawn()
 	ShotClass = AFlybotShot::StaticClass();
 	ShootingLastTime = 0.f;
 
+	// HUD
+	PlayerHUDClass = nullptr;
+	PlayerHUD = nullptr;
+
+	// Health
+	MaxHealth = 25.f;
+	Health = MaxHealth;
+
+	// Power
+	MaxPower = 25.f;
+	Power = MaxPower;
+	PowerRegenerateRate = 1.f;
+
 	// Allow ticking for the pawn.
 	PrimaryActorTick.bCanEverTick = true;
 
@@ -90,6 +105,7 @@ void AFlybotPlayerPawn::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& Ou
 {
 	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
 	DOREPLIFETIME_CONDITION(AFlybotPlayerPawn, bShooting, COND_SimulatedOnly);
+	DOREPLIFETIME_CONDITION(AFlybotPlayerPawn, Health, COND_OwnerOnly);
 }
 
 void AFlybotPlayerPawn::SetupPlayerInputComponent(UInputComponent* PlayerInputComponent)
@@ -116,10 +132,39 @@ void AFlybotPlayerPawn::SetupPlayerInputComponent(UInputComponent* PlayerInputCo
 	Subsystem->AddMappingContext(FPC->PawnMappingContext, 0);
 }
 
+void AFlybotPlayerPawn::BeginPlay()
+{
+	Super::BeginPlay();
+
+	if (IsLocallyControlled() && PlayerHUDClass)
+	{
+		AFlybotPlayerController* FPC = GetController<AFlybotPlayerController>();
+		check(FPC);
+		PlayerHUD = CreateWidget<UFlybotPlayerHUD>(FPC, PlayerHUDClass);
+		check(PlayerHUD);
+		PlayerHUD->AddToPlayerScreen();
+		PlayerHUD->SetHealth(Health, MaxHealth);
+		PlayerHUD->SetPower(Power, MaxPower);
+	}
+}
+
+void AFlybotPlayerPawn::EndPlay(const EEndPlayReason::Type EndPlayReason)
+{
+	if (PlayerHUD)
+	{
+		PlayerHUD->RemoveFromParent();
+		// We can't destroy the widget directly, let the GC take care of it.
+		PlayerHUD = nullptr;
+	}
+
+	Super::EndPlay(EndPlayReason);
+}
+
 void AFlybotPlayerPawn::Tick(float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
 
+	RegeneratePower();
 	TryShooting();
 
 	// Don't animate if we're the server.
@@ -311,21 +356,67 @@ void AFlybotPlayerPawn::UpdateServerShooting_Implementation(bool bNewShooting)
 void AFlybotPlayerPawn::TryShooting()
 {
 	float Now = GetWorld()->GetRealTimeSeconds();
+	float PowerDelta = Cast<AFlybotShot>(ShotClass->GetDefaultObject())->PowerDelta;
 
 	// We spawn shot actors independently on the server and all clients. This way we only need to replicate
 	// the shooting state changes, and not each spawned shot actor and related movement updates.
-	if (!bShooting || Now - ShootingLastTime < ShootingInterval)
+	if (!bShooting || Now - ShootingLastTime < ShootingInterval || Power + PowerDelta <= 0)
 	{
 		return;
 	}
 
-	ShootingLastTime = Now;
-
 	FRotator ShotRotation = Body->GetComponentRotation();
 	FVector ShotStart = Body->GetComponentLocation() + ShotRotation.RotateVector(ShootingOffset);
-	GetWorld()->SpawnActor<AFlybotShot>(ShotClass, ShotStart, ShotRotation);
+	AFlybotShot* Shot = GetWorld()->SpawnActor<AFlybotShot>(ShotClass, ShotStart, ShotRotation);
+	if (Shot)
+	{
+		ShootingLastTime = Now;
+		Shot->SetInstigator(this);
 
-	UE_LOG(LogFlybot, Log, TEXT("Shot spawned %s %s %s"), *GetName(),
-		IsNetMode(NM_Client) ? TEXT("Client") : TEXT("Server"),
-		Controller ? TEXT("Controlled") : TEXT("Simulated"));
+		// Consume used power for shot and update HUD power bar.
+		Power += PowerDelta;
+		if (PlayerHUD)
+		{
+			PlayerHUD->SetPower(Power, MaxPower);
+		}
+
+		UE_LOG(LogFlybot, Log, TEXT("Shot spawned %s %s %s"), *GetName(),
+			IsNetMode(NM_Client) ? TEXT("Client") : TEXT("Server"),
+			Controller ? TEXT("Controlled") : TEXT("Simulated"));
+	}
+}
+
+/*
+* Health
+*/
+
+void AFlybotPlayerPawn::OnRepHealth()
+{
+	if (PlayerHUD)
+	{
+		PlayerHUD->SetHealth(Health, MaxHealth);
+	}
+}
+
+void AFlybotPlayerPawn::UpdateHealth(float HealthDelta)
+{
+	Health = FMath::Clamp(Health + HealthDelta, 0.f, MaxHealth);
+
+	if (Health == 0.f)
+	{
+		// Handle player elimination.
+	}
+}
+
+/*
+* Power
+*/
+
+void AFlybotPlayerPawn::RegeneratePower()
+{
+	Power = FMath::Clamp(Power + (PowerRegenerateRate * GetWorld()->GetDeltaSeconds()), 0.f, MaxPower);
+	if (PlayerHUD)
+	{
+		PlayerHUD->SetPower(Power, MaxPower);
+	}
 }

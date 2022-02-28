@@ -21,6 +21,12 @@ public:
 	/** Bind input actions from player controller. */
 	virtual void SetupPlayerInputComponent(class UInputComponent* PlayerInputComponent) override;
 
+	/** Setup pawn when game starts. */
+	virtual void BeginPlay() override;
+
+	/** Cleanup pawn when game ends. */
+	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
+
 	/** Perform pawn updates that need to happen every frame. */
 	virtual void Tick(float DeltaSeconds) override;
 
@@ -195,4 +201,57 @@ private:
 
 	/** Last time we shot. */
 	float ShootingLastTime;
+
+	/*
+	* HUD
+	*/
+
+	/** Widget class to spawn for the heads up display. */
+	UPROPERTY(EditAnywhere)
+	TSubclassOf<class UFlybotPlayerHUD> PlayerHUDClass;
+
+	/** The widget instance that we are using as our HUD. */
+	UPROPERTY()
+	class UFlybotPlayerHUD* PlayerHUD;
+
+	/*
+	* Health
+	*/
+
+	/** Maximum amount of health to allow for player. */
+	UPROPERTY(EditAnywhere)
+	float MaxHealth;
+
+	/** Current health of player. */
+	UPROPERTY(ReplicatedUsing = OnRepHealth)
+	float Health;
+
+	/** Callback when Health is updated via replication. */
+	UFUNCTION()
+	void OnRepHealth();
+
+public:
+
+	/** Change health value for player. This should only be called on the server. */
+	void UpdateHealth(float HealthDelta);
+
+private:
+
+	/*
+	* Power
+	*/
+
+	/** Maximum amount of power to allow for player. */
+	UPROPERTY(EditAnywhere)
+	float MaxPower;
+
+	/** Current power of player. */
+	float Power;
+
+	/** How much power to regenerate every second. */
+	UPROPERTY(EditAnywhere)
+	float PowerRegenerateRate;
+
+	/** Regenerate power during tick. */
+	void RegeneratePower();
 };
